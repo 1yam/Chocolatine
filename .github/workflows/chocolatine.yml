@@ -1,0 +1,97 @@
+name: chocolatine
+run-name: chocolatine
+on:
+  push:
+    branches-ignore:
+      - "ga-ignore-**"
+  pull_request:
+    branches-ignore:
+      - "ga-ignore-**"
+env:
+  MIRROR_URL: ${{ vars.MIRROR_URL }}
+  EXECUTABLES: ${{ vars.EXECUTABLES }}
+jobs:
+  check_coding_style:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/epitech/coding-style-checker:latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: true
+          fetch-depth: 0
+      - name: Retrieve version
+        run: |
+          check.sh $(pwd) $(pwd)
+          while IFS= read -r line; do
+            error=$(echo $line | awk '{print $2}')
+            file=$(echo $line | awk -F ':' '{print $1}')
+            line_number=$(echo $line | awk -F ':' '{print $2}')
+            echo "::error file=$file,line=$line_number,col=1::$error"
+          done < coding-style-reports.log
+  check_program_compilation:
+    runs-on: ubuntu-latest
+    container:
+      image: epitechcontent/epitest-docker
+    env:
+      MIRROR_URL: ${{ vars.MIRROR_URL }}
+      EXECUTABLES: ${{ vars.EXECUTABLES }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.ref }}
+      - name: Run make
+        run: make
+        timeout-minutes: 2
+      - name: Clean build
+        run: make clean
+      - name: Verify executables
+        run: |
+          for exe in $(echo "${{ vars.EXECUTABLES }}" | tr ',' ' '); do
+            if [ ! -x "$exe" ]; then
+              echo "Executable $exe not found or not executable"
+            exit 1
+          fi
+          done
+  run_tests:
+    runs-on: ubuntu-latest
+    container:
+      image: epitechcontent/epitest-docker
+    env:
+      MIRROR_URL: ${{ vars.MIRROR_URL }}
+      EXECUTABLES: ${{ vars.EXECUTABLES }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.ref }}
+      - name: Compile code
+        run: |
+          timeout 2m make
+      - name: Clean code
+        run: |
+          make clean
+      - name: Run tests
+        run: |
+          timeout 2m make tests_run
+  push_to_mirror:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    env:
+      MIRROR_URL: ${{ vars.MIRROR_URL }}
+      GIT_SSH_PRIVATE_KEY: ${{ secrets.GIT_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Add SSH key to agent and configure SSH
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.GIT_SSH_PRIVATE_KEY }}
+      - name: Push to mirror
+        run: | 
+          git remote add mirror $MIRROR_URL
+          git fetch --unshallow
+          git push -f mirror
